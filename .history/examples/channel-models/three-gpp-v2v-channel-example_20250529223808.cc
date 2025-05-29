@@ -36,14 +36,6 @@
 * [1] 3GPP TR 37.885, v15.3.0
 */
 
-/**
- * zhiy zeng
- * 用于模拟车联网（V2V）通信场景下的信道模型的示例代码，基于 3GPP 标准实现了以下核心功能：
- * 配置车联网传播环境（城市或高速公路场景），包括建筑物布局、车辆移动轨迹。
- * 模拟 3GPP 定义的信道特性：路径损耗、快衰落、波束成形（DFT 波束赋形）和信道状态（LOS/NLOS）。
- * 输出仿真数据：记录时间、节点位置、信道状态、SNR 和路径损耗，用于后续分析和可视化（如生成 GIF 和 SNR 曲线）。
- */
-
 #include "ns3/buildings-module.h"
 #include "ns3/mobility-module.h"
 #include "ns3/core-module.h"
@@ -67,18 +59,6 @@ static Ptr<ChannelConditionModel> m_condModel; //!< the ChannelConditionModel ob
  * \param thisDevice the device performing the beamforming
  * \param thisAntenna the antenna object associated to thisDevice
  * \param otherDevice the device towards which point the beam
- */
-
-/**
- * zhiy zeng: 实现 DFT 波束赋形，根据收发节点位置计算天线权重，使信号能量集中于目标方向
- * @param thisDevice 执行波束赋形的设备, 即发射设备（含天线模型）
- * @param thisAntenna 设备关联的天线模型, 发射天线阵列模型
- * @param otherDevice 目标设备, 即接收设备（目标节点）
- * 
- * 核心逻辑
- * 1. 获取收发节点坐标，计算方位角（phi）和仰角（theta）
- * 2. 根据天线阵元位置和角度，生成相位偏移量，计算各阵元的加权系数（复数形式）
- * 3. 通过SetBeamformingVector设置天线权重，实现波束指向优化
  */
 static void
 DoBeamforming (Ptr<NetDevice> thisDevice, Ptr<ThreeGppAntennaArrayModel> thisAntenna, Ptr<NetDevice> otherDevice)
@@ -126,21 +106,6 @@ DoBeamforming (Ptr<NetDevice> thisDevice, Ptr<ThreeGppAntennaArrayModel> thisAnt
  * \param txPsd the PSD of the transmitting signal
  * \param noiseFigure the noise figure in dB
  */
-/**
- * zhiy zeng: 计算信噪比（SNR），并记录仿真数据（时间、位置、信道状态、SNR、路径损耗）
- * @param txMob 发射端的移动模型, 即发送设备的移动模型
- * @param rxMob 接收端的移动模型, 即接收设备的移动模型
- * @param txPsd 发射信号的功率谱密度（PSD）, 即发送设备发射信号的功率谱密度
- * @param noiseFigure 噪声系数（dB）, 即接收设备的噪声系数
- * 
- * 核心逻辑
- * 1. 获取信道状态：通过m_condModel判断 LOS/NLOS 条件
- * 2. 计算路径损耗：调用m_propagationLossModel计算接收功率增益（线性值），转换为路径损耗（dB）
- * 3. 应用快衰落和波束增益：通过m_spectrumLossModel模拟频率选择性衰落和天线增益
- * 4. 计算噪声功率：基于热噪声公式（kT）和噪声系数生成噪声 PSD
- * 5. 输出数据：将结果写入example-output.txt，格式为逗号分隔的数值
- */
-
 static void
 ComputeSnr (Ptr<MobilityModel> txMob, Ptr<MobilityModel> rxMob, Ptr<const SpectrumValue> txPsd, double noiseFigure)
 {
@@ -190,14 +155,6 @@ ComputeSnr (Ptr<MobilityModel> txMob, Ptr<MobilityModel> rxMob, Ptr<const Spectr
  * scenario
  * \param filename the name of the output file
  */
-
-/**
- * zhiy zeng: 将场景中的建筑物布局导出为 Gnuplot 可识别的坐标文件，用于后续可视化
- * @param filename 输出文件名, 即生成的 Gnuplot 文件名
- * 
- * 核心逻辑
- * 1. 遍历所有建筑物，记录其边界坐标（矩形范围），生成 Gnuplot 的set object指令，保存至文件
- */
 void
 PrintGnuplottableBuildingListToFile (std::string filename)
 {
@@ -220,21 +177,6 @@ PrintGnuplottableBuildingListToFile (std::string filename)
     }
 }
 
-/**
- * zhiy zeng: 初始化仿真环境，配置参数，创建节点、天线、移动模型和信道模型，并启动仿真
- * 
- * 核心逻辑
- * 1. 参数配置：设置频率、发射功率、噪声系数、场景类型（城市或高速公路）、车辆速度、子载波间隔和资源块数量等。
- * 2. 创建节点：生成两个节点，分别作为发送端和接收端, 绑定SimpleNetDevice和ThreeGppAntennaArrayModel（2x2 天线阵列）。
- * 3. 设置移动模型：根据场景类型（城市或高速公路）创建车辆的移动轨迹，使用WaypointMobilityModel模拟车辆在道路上的移动, 
- *    使用ConstantVelocityMobilityModel定义车辆匀速直线运动（前后行驶，间距 20 米）
- * 4. 信道模型初始化: 根据场景类型选择ThreeGppV2vUrban/V2vHighwayChannelConditionModel和路径损耗模型
- *    配置ThreeGppChannelModel和ThreeGppSpectrumPropagationLossModel，关联天线和设备
- * 5. 波束成形与 PSD 设置：调用DoBeamforming初始化收发端波束方向
- *    生成资源块（RB）对应的功率谱密度，模拟多载波信号（如 5G NR）
- * 6. 仿真调度与运行：按时间步长（timeRes=10ms）调度ComputeSnr函数，周期性计算 SNR 和路径损耗
- *    初始化输出文件头，运行仿真并销毁资源
- */
 int
 main (int argc, char *argv[])
 {

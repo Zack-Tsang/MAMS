@@ -35,12 +35,13 @@
 #include "quic-socket-tx-buffer.h"
 #include "quic-socket-base.h"
 
+// Add by ywj, zhiy zeng
 #include <iomanip>
 #include <cstring>
 #include <stdlib.h>
 #include <unistd.h>
 #include <regex>
-
+/////////////////////////
 namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("QuicSocketTxScheduler");
@@ -354,7 +355,9 @@ QuicSocketTxScheduler::GetNewSegment (uint32_t numBytes, uint32_t pathId, uint64
 }
  */
 
-
+/**
+ * zhiy zeng: Modify by ywj
+ */
 Ptr<QuicSocketTxItem>
 QuicSocketTxScheduler::GetNewSegment (uint32_t numBytes, uint32_t pathId, uint64_t Q, bool isFast, bool QUpdate, uint32_t fileSize, uint8_t algo)
 {
@@ -968,6 +971,9 @@ QuicSocketTxScheduler::GetNewSegment (uint32_t numBytes, uint32_t pathId, uint64
   
 }
 
+/**
+ * zhiy zeng: Add by ywj
+ */
 void
 QuicSocketTxScheduler::PrintSendTimeLog () 
 {
@@ -998,6 +1004,9 @@ QuicSocketTxScheduler::AppSize (void) const
   return m_appSize;
 }
 
+/**
+ * zhiy zeng: Add by ywj
+ */
 uint32_t
 QuicSocketTxScheduler::FileSize (void) const
 {
@@ -1010,7 +1019,9 @@ QuicSocketTxScheduler::SizeOnSlowPath (void) const
   return m_leftSizeOnSlowPath;
 }
 
-
+/**
+ * zhiy zeng: Add by ywj
+ */
 uint32_t
 QuicSocketTxScheduler::CalculateSubHeaderLength (uint32_t oldLength, uint32_t streamId, uint32_t oldOffset, bool oldOffBit, bool lengthBit, bool oldFinBit)
 {

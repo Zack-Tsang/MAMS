@@ -44,9 +44,35 @@
 #include <string>
 #include <regex>
 
+/**
+ * zhiy zeng: 一个基于 NS-3 的MPQUIC（多路径 QUIC）测试程序
+ * 主要用于模拟多路径传输场景下的性能评估，支持动态调整路径参数
+ * （带宽、延迟、丢包率）和调度算法，验证 MPQUIC 在不同网络条
+ * 件下的表现。核心功能包括：
+ * - 多路径环境配置：创建两条点到点链路模拟不同路径，支持
+ * 移动场景下的动态参数修改（如带宽随时间变化）。
+ * - QUIC 协议栈集成：使用 NS-3 的 QUIC 模块实现 
+ * echo 客户端和服务器，支持文件传输和流量统计
+ * - 性能指标收集：跟踪拥塞窗口（CWND）、往返时间
+ * （RTT）、吞吐量等指标，并生成可视化图表（Gnuplot）和统计报告。
+ * - 可配置参数：通过命令行调整移动性、随机模式、丢包率、调度算法
+ * 等，灵活支持不同实验场景。
+ * 
+ * 可根据移动场景及随机移动模式, 动态修改路径带宽和延迟
+ * 可设置丢包率
+ * 可设置调度算法
+ * 仅支持2条路径
+ * 但没看到链路层信息的模拟？
+ * 
+ */
+
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("quic-tester");
+
+/**
+ * zhiy zeng: 监听 QUIC 套接字的拥塞窗口变化，将时间、新旧拥塞窗口值写入跟踪文件
+ */
 // connect to a number of traces
 static void
 CwndChange (Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
@@ -54,6 +80,9 @@ CwndChange (Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
   *stream->GetStream () << Simulator::Now ().GetSeconds () << "\t" << oldCwnd << "\t" << newCwnd << std::endl;
 }
 
+/**
+ * zhiy zeng: 监听 QUIC 套接字的 RTT 变化，记录时间、新旧 RTT 值
+ */
 static void
 RttChange (Ptr<OutputStreamWrapper> stream, Time oldRtt, Time newRtt)
 {
@@ -67,6 +96,13 @@ RttChange (Ptr<OutputStreamWrapper> stream, Time oldRtt, Time newRtt)
 //   *stream->GetStream () << Simulator::Now ().GetSeconds () << "\t" << p->GetSize() << std::endl;
 // }
 
+/**
+ * zhiy zeng: 配置 QUIC 协议栈的跟踪点，连接到CwndChange和RttChange回调函数
+ * 生成不同路径（子流）的拥塞窗口和 RTT 跟踪文件（如QUIC-cwnd-change-p0-<id>.txt）
+ * @param serverId 服务器节点 ID（用于定位跟踪路径）
+ * @param pathVersion 跟踪文件的版本路径前缀（如./server）
+ * @param finalPart 跟踪文件的后缀部分（如.txt）
+ */
 static void
 Traces(uint32_t serverId, std::string pathVersion, std::string finalPart)
 {
@@ -151,6 +187,11 @@ Traces(uint32_t serverId, std::string pathVersion, std::string finalPart)
 
 std::vector<uint32_t> RxBytesList = boost::assign::list_of(0)(0);
 
+/**
+ * zhiy zeng: 周期性（每秒）通过FlowMonitor收集流量统计数据（如接收字节数）
+ * 计算路径吞吐量（Mbps），更新 Gnuplot 数据集用于后续绘图
+ * 核心逻辑：解析流统计信息，区分不同路径（通过FlowId），累加接收字节数并计算时间间隔内的吞吐量
+ */
 void ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon, Gnuplot2dDataset DataSet, Gnuplot2dDataset DataSet1)
 	{
     // double localThrou=0;
@@ -188,7 +229,13 @@ void ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon, G
 
 
 
-
+/**
+ * zhiy zeng: 动态修改指定路径的带宽，并更新 QUIC 客户端的路径配置
+ * @param ptp 指向 NetDeviceContainer 的指针，目标路径的设备容器（点到点链路）
+ * @param echoClient QuicEchoClientHelper 对象，QUIC 客户端助手，用于同步路径带宽参数
+ * @param lr 新的带宽值（DataRate 类型, 如"10Mbps"）
+ * @param subflowId 子流 (路径) ID（0 或 1），用于区分不同路径
+ */
 void
 ModifyLinkRate(NetDeviceContainer *ptp, QuicEchoClientHelper echoClient, DataRate lr, uint8_t subflowId) {
     StaticCast<PointToPointNetDevice>(ptp->Get(0))->SetDataRate(lr);
@@ -198,7 +245,20 @@ ModifyLinkRate(NetDeviceContainer *ptp, QuicEchoClientHelper echoClient, DataRat
     
 }
   
-
+/**
+ * zhiy zeng: 初始化整个仿真流程，核心步骤包括：
+ * - 参数解析：通过命令行获取移动性、丢包率、调度算法等配置
+ * - 节点与协议栈创建：创建两个节点，安装 QUIC 协议栈和 Internet 协议栈
+ * - 路径配置：1) 创建两条点到点链路，设置初始带宽、延迟和丢包模型; 
+ *            2) 分配 IPv4 地址，绑定 QUIC 接口
+ * - 应用层配置：1) 在服务器节点（n2）安装 QUIC echo 服务器，监听端口 9; 
+ *              2) 在客户端节点（n1）安装 QUIC echo 客户端，配置文件传输
+ *                 参数（文件大小、发包间隔）
+ * - 统计与跟踪配置：1) 启用FlowMonitor收集流量统计，配置 Gnuplot 生成吞吐量曲线;
+ *                  2) 调用Traces函数设置拥塞窗口和 RTT 跟踪
+ * - 动态参数调整：1) 在移动场景中，按预设时间间隔修改路径带宽（支持固定模式或随机模式）
+ * - 仿真执行与输出：运行仿真，生成统计报告和可视化图表（PNG 格式）
+ */
 int
 main (int argc, char *argv[])
 {
@@ -246,81 +306,81 @@ main (int argc, char *argv[])
 //  LogComponentEnable ("Header", log_precision);
 //  LogComponentEnable ("PacketMetadata", log_precision);
 
-  bool isMob = true;
-  bool randMob = false;
-  std::vector<std::string> rate(2);
-  std::vector<std::string> delay(2);
-  std::vector<NetDeviceContainer> netDevices(2);
-  std::string dataRate0 = "10Mbps";
-  std::string delay1 = "10ms";
-  delay[0] = "50ms";
-  rate[1] = "50Mbps";
+  bool isMob = true; // 是否启用移动性, zhiy zeng
+  bool randMob = false; // 是否启用随机移动, zhiy zeng
+  std::vector<std::string> rate(2); // 路径带宽向量, zhiy zeng
+  std::vector<std::string> delay(2); // 路径延迟向量, zhiy zeng
+  std::vector<NetDeviceContainer> netDevices(2); // 路径设备向量, zhiy zeng
+  std::string dataRate0 = "10Mbps";  // 路径0带宽, zhiy zeng
+  std::string delay1 = "10ms"; // 路径1初始延迟, zhiy zeng
+  delay[0] = "50ms"; // 路径0延迟, zhiy zeng
+  rate[1] = "50Mbps"; // 路径1带宽, zhiy zeng
 
-  double errorRate = 0.000004;
-  uint8_t schAlgo = 3;
-  std::string maxBuffSize = "5p";
-  uint64_t fileSize = 5e6;
+  double errorRate = 0.000004; // 丢包率, zhiy zeng
+  uint8_t schAlgo = 3; // 调度算法, 2, mpquic-rr, 3. MAMS, 5. LATE, zhiy zeng
+  std::string maxBuffSize = "5p"; // 路由器最大缓冲区大小, zhiy zeng
+  uint64_t fileSize = 5e6; // 文件大小5MB, zhiy zeng
 
   CommandLine cmd;
-  cmd.Usage ("Simulation of bulkSend over MPQUIC.\n");
-  cmd.AddValue ("isMob", "mobility scenario", isMob);
-  cmd.AddValue ("randMob", "mobility pattern", randMob);
-  cmd.AddValue ("errorRate", "The percentage of packets that should be lost, expressed as a double where 1 == 100%", errorRate);
-  cmd.AddValue ("fileSize", "file size", fileSize);
-  cmd.AddValue ("delay1", "The initial delay for path1", delay1);
-  cmd.AddValue ("dataRate0", "The data rate for path 0", dataRate0);
-  cmd.AddValue ("maxBuffSize", "max buffer size of router", maxBuffSize);
+  cmd.Usage ("Simulation of bulkSend over MPQUIC.\n"); // 使用说明：模拟块传输应用, zhiy zeng
+  cmd.AddValue ("isMob", "mobility scenario", isMob); // 是否启用移动场景, zhiy zeng
+  cmd.AddValue ("randMob", "mobility pattern", randMob); // 是否启用随机移动, zhiy zeng
+  cmd.AddValue ("errorRate", "The percentage of packets that should be lost, expressed as a double where 1 == 100%", errorRate); // 丢包率, zhiy zeng
+  cmd.AddValue ("fileSize", "file size", fileSize); // 文件大小, zhiy zeng
+  cmd.AddValue ("delay1", "The initial delay for path1", delay1); // 路径1初始延迟, zhiy zeng
+  cmd.AddValue ("dataRate0", "The data rate for path 0", dataRate0); // 路径0带宽, zhiy zeng
+  cmd.AddValue ("maxBuffSize", "max buffer size of router", maxBuffSize); // 路由器最大缓冲区大小, zhiy zeng
   cmd.AddValue ("schAlgo", "mutipath scheduler algorithm", schAlgo); // 2, mpquic-rr, 3. MAMS, 5. LATE
 
   cmd.Parse (argc, argv);
 
-  rate[0] = dataRate0;
-  delay[1] = delay1;
+  rate[0] = dataRate0; // 路径0带宽, zhiy zeng
+  delay[1] = delay1; // 路径1初始延迟, zhiy zeng
 
 
   // Config::SetDefault ("ns3::QuicScheduler::SchedulerType", StringValue ("rtt"));  
   // Config::SetDefault ("ns3::MpQuicSubFlow::CCType", StringValue ("OLIA"));
-  Config::SetDefault ("ns3::QuicStreamBase::StreamSndBufSize",UintegerValue(10485760));
-  Config::SetDefault ("ns3::QuicStreamBase::StreamRcvBufSize",UintegerValue(10485760));
-  Config::SetDefault ("ns3::QuicSocketBase::SocketSndBufSize",UintegerValue(10485760));
-  Config::SetDefault ("ns3::QuicSocketBase::SocketRcvBufSize",UintegerValue(10485760));
+  Config::SetDefault ("ns3::QuicStreamBase::StreamSndBufSize",UintegerValue(10485760)); // 设置流发送缓冲区大小为10MB
+  Config::SetDefault ("ns3::QuicStreamBase::StreamRcvBufSize",UintegerValue(10485760)); // 设置流接收缓冲区大小为10MB
+  Config::SetDefault ("ns3::QuicSocketBase::SocketSndBufSize",UintegerValue(10485760)); // 设置套接字发送缓冲区大小为10MB
+  Config::SetDefault ("ns3::QuicSocketBase::SocketRcvBufSize",UintegerValue(10485760)); // 设置套接字接收缓冲区大小为10MB
 
-  Config::SetDefault ("ns3::MpQuicSubFlow::delay", DoubleValue (0.03));
-  Config::SetDefault ("ns3::DropTailQueue<Packet>::MaxSize", StringValue (maxBuffSize));
+  Config::SetDefault ("ns3::MpQuicSubFlow::delay", DoubleValue (0.03)); // 设置路径延迟为0.03s
+  Config::SetDefault ("ns3::DropTailQueue<Packet>::MaxSize", StringValue (maxBuffSize)); // 设置路由器最大缓冲区大小
 
 
 
   NodeContainer nodes;
-  nodes.Create (2);
-  auto n1 = nodes.Get (0);
-  auto n2 = nodes.Get (1);
+  nodes.Create (2); // 创建两个节点, zhiy zeng
+  auto n1 = nodes.Get (0); // 获取第一个节点, zhiy zeng
+  auto n2 = nodes.Get (1); // 获取第二个节点, zhiy zeng
 
-  int sf = 2;
-  Time simulationEndTime = Seconds (50);
+  int sf = 2; // 子流（路径）数
+  Time simulationEndTime = Seconds (50); // 模拟结束时间, zhiy zeng
 
-  int start_time = 1;
+  int start_time = 1; // 模拟启动时间, zhiy zeng
 
   QuicHelper stack;
-  stack.InstallQuic (nodes);
+  stack.InstallQuic (nodes); // 为节点安装QUIC协议栈, zhiy zeng
 
   
   float delayInt [2];
-  for (int i = 0; i < delay.size(); i++)
+  for (int i = 0; i < delay.size(); i++) // 遍历延迟向量, zhiy zeng
     {
       std::stringstream ss(delay[i]);
-      for(int j = 0; ss >> j; ) 
+      for(int j = 0; ss >> j; ) // 从 std::stringstream 中提取一个整数值到变量 j
         {
-          delayInt [i] = (float) j / 1000;
+          delayInt [i] = (float) j / 1000; // 将延迟值转换为秒
         }
     }
 
   float bwInt [2];
-  for (int i = 0; i < rate.size(); i++)
+  for (int i = 0; i < rate.size(); i++) // 遍历带宽向量, zhiy zeng
     {
       std::stringstream ss(rate[i]);
-      for(int j = 0; ss >> j; ) 
+      for(int j = 0; ss >> j; )  // 从 std::stringstream 中提取一个整数值到变量 j
         {
-          bwInt [i] = (float) j;
+          bwInt [i] = (float) j; // 将带宽值转换为浮点数
         }
     }
 
@@ -341,27 +401,27 @@ main (int argc, char *argv[])
 
   // double errorRate = 0.1;
 
-    Ptr<RateErrorModel> em1 = 
+    Ptr<RateErrorModel> em1 = // 丢包模型
     CreateObjectWithAttributes<RateErrorModel> ("RanVar", StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=1.0]"), "ErrorRate", DoubleValue (errorRate));
 
-  for(int i=0; i < sf; i++)
+  for(int i=0; i < sf; i++) // sf为子流（路径）数
   {
       // Creation of the point to point link between hots
       PointToPointHelper p2plink;
-      p2plink.SetDeviceAttribute ("DataRate", StringValue(rate[i]));
-      p2plink.SetChannelAttribute("Delay", StringValue(delay[i]));
+      p2plink.SetDeviceAttribute ("DataRate", StringValue(rate[i])); // 设置路径带宽
+      p2plink.SetChannelAttribute("Delay", StringValue(delay[i])); // 设置路径延迟
      // p2plink.SetDeviceAttribute ("ReceiveErrorModel", PointerValue (&error_model));
 
       // NetDeviceContainer netDevices;
-      netDevices[i] = p2plink.Install(nodes);
+      netDevices[i] = p2plink.Install(nodes); // 安装点对点设备, zhiy zeng
 
-      netDevices[i].Get (1)->SetAttribute ("ReceiveErrorModel", PointerValue (em1));
+      netDevices[i].Get (1)->SetAttribute ("ReceiveErrorModel", PointerValue (em1)); // 设置接收错误模型, 即丢包模型
 
       std::cout<<"netdevice 0 "<<netDevices[i].Get(0)
               <<"netdevice 1 "<<netDevices[i].Get(1)
               <<"\n";
       
-      // Attribution of the IP addresses
+      // Attribution of the IP addresses, 设置IPv4地址, zhiy zeng
       std::stringstream netAddr;
       netAddr << "10.1." << (i+1) << ".0";
       std::string str = netAddr.str();
@@ -371,7 +431,7 @@ main (int argc, char *argv[])
       Ipv4InterfaceContainer interface = ipv4addr.Assign(netDevices[i]);
       ipv4Ints.insert(ipv4Ints.end(), interface);
 
-      p2plink.EnablePcap ("prueba" , nodes, true);
+      p2plink.EnablePcap ("prueba" , nodes, true); // 启用pcap捕获, zhiy zeng
   }
 
     for (auto ipaddr:ipv4Ints)
@@ -382,31 +442,31 @@ main (int argc, char *argv[])
 
   uint8_t dlPort = 9;
 
-  QuicEchoServerHelper echoServer (dlPort);
+  QuicEchoServerHelper echoServer (dlPort); // 新建一个echo服务器对象，并设置服务器监听端口, zhiy zeng
 
-  ApplicationContainer serverApps = echoServer.Install (nodes.Get (1));
-  serverApps.Start (Seconds (0.0));
-  serverApps.Stop (simulationEndTime);
+  ApplicationContainer serverApps = echoServer.Install (nodes.Get (1)); // 在节点n2上安装echo服务器, zhiy zeng
+  serverApps.Start (Seconds (0.0)); // 设置echo服务器的开启时间为0.0, zhiy zeng
+  serverApps.Stop (simulationEndTime); // 设置echo服务器的停止时间为simulationEndTime, zhiy zeng
 
   //QuicEchoClientHelper echoClient (ground_station_interfaces[1].GetAddress(0), 9);
   //for our multipath scenario, there are 4 interfaces in total, [0],[1] are for gs1; [2],[3] are for gs2 
-  QuicEchoClientHelper echoClient (ipv4Ints[0].GetAddress (1), dlPort);
-  echoClient.SetAttribute ("MaxPackets", UintegerValue (1));
-  echoClient.SetAttribute ("Interval", TimeValue (Seconds (0.01)));
-  echoClient.SetAttribute ("PacketSize", UintegerValue(1460));
-  echoClient.SetIniRTT0 (Seconds (delayInt [0]));
-  echoClient.SetIniRTT1 (Seconds (delayInt [1]));
-  echoClient.SetER (errorRate);
-  echoClient.SetBW0 (DataRate (rate[0]));
-  echoClient.SetBW1 (DataRate (rate[1]));
-  echoClient.SetScheAlgo (schAlgo);
-  echoClient.WithMobility (isMob);
+  QuicEchoClientHelper echoClient (ipv4Ints[0].GetAddress (1), dlPort); // 新建一个echo客户端，并设置其IP及连接端口, zhiy zeng
+  echoClient.SetAttribute ("MaxPackets", UintegerValue (1)); // 设置最大发包数? zhiy zeng
+  echoClient.SetAttribute ("Interval", TimeValue (Seconds (0.01))); // 设置发包间隔, zhiy zeng
+  echoClient.SetAttribute ("PacketSize", UintegerValue(1460)); // 设置包大小？zhiy zeng
+  echoClient.SetIniRTT0 (Seconds (delayInt [0])); // 设置路径0的初始延迟, zhiy zeng
+  echoClient.SetIniRTT1 (Seconds (delayInt [1])); // 设置路径1的初始延迟, zhiy zeng
+  echoClient.SetER (errorRate); // 设置丢包率, zhiy zeng
+  echoClient.SetBW0 (DataRate (rate[0])); // 设置路径0的带宽, zhiy zeng
+  echoClient.SetBW1 (DataRate (rate[1])); // 设置路径1的带宽, zhiy zeng
+  echoClient.SetScheAlgo (schAlgo); // 设置调度算法, zhiy zeng
+  echoClient.WithMobility (isMob); // 设置是否启用移动性, zhiy zeng
 
-  ApplicationContainer clientApps = echoClient.Install (nodes.Get (0));
+  ApplicationContainer clientApps = echoClient.Install (nodes.Get (0)); // 在节点n1上安装echo客户端, zhiy zeng
   //echoClient.SetFill (clientApps.Get (0),"Hello World");
-  echoClient.SetFill (clientApps.Get (0),100,fileSize);
-  clientApps.Start (Seconds (start_time));
-  clientApps.Stop (simulationEndTime);
+  echoClient.SetFill (clientApps.Get (0),100,fileSize); // 设置填充数据, zhiy zeng
+  clientApps.Start (Seconds (start_time)); // 设置echo客户端的开启时间, zhiy zeng
+  clientApps.Stop (simulationEndTime); // 设置echo客户端的停止时间, zhiy zeng
 
 
 
@@ -432,12 +492,12 @@ main (int argc, char *argv[])
 
 
   Simulator::Schedule (Seconds (start_time+0.0000001), &Traces, n2->GetId(),
-        "./server", ".txt");
+        "./server", ".txt"); // 记录服务器端的跟踪信息, zhiy zeng
   Simulator::Schedule (Seconds (start_time+0.0000001), &Traces, n1->GetId(),
-        "./client", ".txt");
+        "./client", ".txt"); // 记录客户端的跟踪信息, zhiy zeng
 
-  Packet::EnablePrinting ();
-  Packet::EnableChecking ();
+  Packet::EnablePrinting (); // 启用数据包打印, zhiy zeng
+  Packet::EnableChecking (); // 启用数据包检查, zhiy zeng
 
 
     std::string fileNameWithNoExtension = "FlowVSThroughput_";
@@ -474,13 +534,13 @@ main (int argc, char *argv[])
   ThroughputMonitor(&flowmon, monitor, dataset, dataset1); 
   // outfile1.close();
 
-  if (isMob)
+  if (isMob) // 如果处于移动场景, zhiy zeng
     {
       for (int i = 0; i < 50; i++)
         {
           for (int j = 1; j < 5; j++)
             {
-              //after the rtt of each path, modify the data rate
+              //after the rtt of each path, modify the data rate, 间隔一个路径的rtt，修改路径带宽
               Simulator::Schedule (Seconds (start_time + (i * 4 + j + 1) * delayInt[0] * 2), &ModifyLinkRate, &netDevices[0], echoClient, DataRate(std::to_string(bwInt[0]-j*(bwInt[0]/5))+"Mbps"), 0);
               // std::cout<<"time: "<< start_time + (i * 4 + j) * delayInt[0] * 2 <<" path0 : rate "<<bwInt[0]-j*(bwInt[0]/5)<<"Mbps"<<"\n";
               Simulator::Schedule (Seconds (start_time + (i * 4 + j + 1) * delayInt[1] * 2), &ModifyLinkRate, &netDevices[1], echoClient, DataRate(std::to_string(bwInt[0]/5*(j+1))+"Mbps"), 1);
@@ -490,14 +550,15 @@ main (int argc, char *argv[])
     }
 
 
-      if (isMob)
+      if (isMob) // 如果处于移动场景, zhiy zeng
       { 
         for (int i = 0; i < 50; i++)
           {
             for (int j = 1; j < 5; j++)
               {
-                if (randMob)
+                if (randMob) // 如果采用随机移动模式, zhiy zeng
                 {
+                  // 采用均匀分布产生随机带宽
                   Ptr<ns3::NormalRandomVariable> rate = CreateObject<NormalRandomVariable> ();
                   rate->SetAttribute ("Mean", DoubleValue (bwInt[0]));
                   rate->SetAttribute ("Variance", DoubleValue (bwInt[0]/10));

@@ -25,6 +25,14 @@
  *
  */
 
+ /**
+  * zhiy zeng: 用于在 NS-3 网络模拟器中实现一个 WiFi 距离测试实验
+  * 该实验通过 Sender 和 Receiver 应用程序模拟 WiFi 网络中两个节点之间的通信
+  * Sender 类 - 按照设定的时间间隔向目标地址发送固定大小的 UDP 数据包
+  * Receiver 类 - 监听指定端口，接收 UDP 数据包并记录接收统计信息
+  * TimestampTag 类 - 为数据包添加时间戳标签，用于计算端到端延迟
+  */
+
 #include <ostream>
 
 #include "ns3/core-module.h"

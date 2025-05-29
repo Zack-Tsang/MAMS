@@ -19,7 +19,7 @@
  *          Federico Chiariotti <chiariotti.federico@gmail.com>
  *          Michele Polese <michele.polese@gmail.com>
  *          Davide Marcato <davidemarcato@outlook.com>
- *
+ *          Shengjie Shu <shengjies@uvic.ca>
  */
 
 #include <stdint.h>
@@ -35,10 +35,6 @@ NS_LOG_COMPONENT_DEFINE ("QuicHeader");
 
 NS_OBJECT_ENSURE_REGISTERED (QuicHeader);
 
-/**
- * zhiy zeng: Modify by ywj
- * 添加成员变量m_seq
- */
 QuicHeader::QuicHeader ()
   : m_form (SHORT),
   m_c (false),
@@ -47,8 +43,7 @@ QuicHeader::QuicHeader ()
   m_connectionId (0),
   m_packetNumber (0),
   m_version (0),
-  m_pathId (0),
-  m_seq (0)
+  m_pathId (0)
 {
 }
 
@@ -57,10 +52,6 @@ QuicHeader::~QuicHeader ()
 {
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 添加包头类型Announce
- */
 std::string
 QuicHeader::TypeToString () const
 {
@@ -70,8 +61,7 @@ QuicHeader::TypeToString () const
     "Retry",
     "Handshake",
     "0-RTT Protected",
-    "None",
-    "Announce"
+    "None"
   };
   static const char* shortTypeNames[4] = {
     "1 Octet",
@@ -120,10 +110,6 @@ QuicHeader::GetSerializedSize (void) const
   return serializesSize;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改包头长度计算
- */
 uint32_t
 QuicHeader::CalculateHeaderLength () const
 {
@@ -137,7 +123,8 @@ QuicHeader::CalculateHeaderLength () const
     {
       len = 8 + 64 * HasConnectionId () + GetPacketNumLen () + 8 + 32;
     }
-  // len += 16+32; // Delete by ywj, zhiy zeng
+  
+  len += 16+32;
   return len / 8;
 }
 
@@ -173,10 +160,6 @@ QuicHeader::GetPacketNumLen () const
   return 0;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 增加i.WriteHtonU32 (m_seq.GetValue ())
- */
 void
 QuicHeader::Serialize (Buffer::Iterator start) const
 {
@@ -223,13 +206,9 @@ QuicHeader::Serialize (Buffer::Iterator start) const
         }
     }
   i.WriteU8 (m_pathId);
-  i.WriteHtonU32 (m_seq.GetValue ()); // Add by ywj, zhiy zeng
+  // i.WriteHtonU32 (m_seq.GetValue ());
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 如上，增加SetSeq(SequenceNumber32 (i.ReadNtohU32 ()))
- */
 uint32_t
 QuicHeader::Deserialize (Buffer::Iterator start)
 {
@@ -283,8 +262,8 @@ QuicHeader::Deserialize (Buffer::Iterator start)
         }
     }
 
-  SetPathId(i.ReadU8());
-  SetSeq(SequenceNumber32 (i.ReadNtohU32 ())); // Add by ywj, zhiy zeng
+  SetPathId(i.ReadU8 ());
+  // SetSeq(SequenceNumber32 (i.ReadNtohU32 ()));
 
   NS_LOG_INFO ("Deserialize::Serialized Size " << CalculateHeaderLength ());
 
@@ -319,26 +298,10 @@ QuicHeader::Print (std::ostream &os) const
       os << "PacketNumber " << m_packetNumber << "|\n|";
     }
   os << "PathID " << unsigned(m_pathId) << "|\n";
+  // os << "Seq " << m_seq << "|\n";
 }
 
-/**
- * zhiy zeng: Add by ywj
- * 创建Announce包头
- */
-QuicHeader
-QuicHeader::CreateAnnounce (uint64_t connectionId, uint32_t version, SequenceNumber32 packetNumber)
-{
-  NS_LOG_INFO ("Create Announce Helper called");
 
-  QuicHeader head;
-  head.SetFormat (QuicHeader::LONG);
-  head.SetTypeByte (QuicHeader::ANNOUNCE);
-  head.SetConnectionID (connectionId);
-  head.SetVersion (version);
-  head.SetPacketNumber (packetNumber);
-
-  return head;
-}
 
 QuicHeader
 QuicHeader::CreateInitial (uint64_t connectionId, uint32_t version, SequenceNumber32 packetNumber)
@@ -569,26 +532,18 @@ QuicHeader::SetPathId (uint8_t pathId)
   m_pathId = pathId;
 }
 
-/**
- * zhiy zeng: Add by ywj
- * 获取包头序列号
- */
-SequenceNumber32
-QuicHeader::GetSeq () const
-{
-  return m_seq;
-}
+// SequenceNumber32
+// QuicHeader::GetSeq () const
+// {
+//   return m_seq;
+// }
 
-/**
- * zhiy zeng: Add by ywj
- * 设置包头序列号
- */
-void
-QuicHeader::SetSeq (SequenceNumber32 packNum)
-{
-  NS_LOG_INFO (packNum);
-  m_seq = packNum;
-}
+// void
+// QuicHeader::SetSeq (SequenceNumber32 packNum)
+// {
+//   NS_LOG_INFO (packNum);
+//   m_seq = packNum;
+// }
 
 bool
 QuicHeader::IsInitial () const
@@ -608,15 +563,6 @@ QuicHeader::IsHandshake () const
   return m_type == HANDSHAKE;
 }
 
-/**
- * zhiy zeng: Add by ywj
- * 判断包头类型是否为Announce
- */
-bool
-QuicHeader::IsAnnounce () const
-{
-  return m_type == ANNOUNCE;
-}
 
 
 bool
@@ -635,10 +581,6 @@ bool QuicHeader::HasConnectionId () const
   return not (IsShort () and m_c == false);
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 添加对包头类型的判断
- */
 bool
 operator== (const QuicHeader &lhs, const QuicHeader &rhs)
 {
@@ -651,7 +593,7 @@ operator== (const QuicHeader &lhs, const QuicHeader &rhs)
     && lhs.m_packetNumber == rhs.m_packetNumber
     && lhs.m_version == rhs.m_version
     && lhs.m_pathId == rhs.m_pathId
-    && lhs.m_seq == rhs.m_seq
+    // && lhs.m_seq == rhs.m_seq
     );
 }
 

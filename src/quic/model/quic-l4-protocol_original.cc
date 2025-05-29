@@ -19,7 +19,8 @@
  *          Federico Chiariotti <chiariotti.federico@gmail.com>
  *          Michele Polese <michele.polese@gmail.com>
  *          Davide Marcato <davidemarcato@outlook.com>
- *
+ *          Wenjun Yang <wenjunyang@uvic.ca>
+ *          Shengjie Shu <shengjies@uvic.ca>
  */
 
 #include "ns3/assert.h"
@@ -63,34 +64,24 @@ NS_OBJECT_ENSURE_REGISTERED (QuicL4Protocol);
 NS_OBJECT_ENSURE_REGISTERED (QuicUdpBinding);
 NS_LOG_COMPONENT_DEFINE ("QuicL4Protocol");
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改成员变量m_udpSocketList
- * 删除成员变量m_pathId
- */
 QuicUdpBinding::QuicUdpBinding ()
-  : m_udpSocketList (0),
-  m_budpSocket (0),
+  : m_budpSocket (0),
   m_budpSocket6 (0),
   m_quicSocket (nullptr),
-  m_listenerBinding (false)
+  m_listenerBinding (false),
+  m_pathId(0)
 {
   NS_LOG_FUNCTION (this);
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 增加对m_udpSocketList的处理
- * 删除对m_pathId的处理
- */
 QuicUdpBinding::~QuicUdpBinding ()
 {
   NS_LOG_FUNCTION (this);
-  m_udpSocketList.clear();
   m_budpSocket = 0;
   m_budpSocket6 = 0;
   m_quicSocket = nullptr;
   m_listenerBinding = false;
+  m_pathId = 0;
 }
 
 TypeId
@@ -185,10 +176,6 @@ QuicL4Protocol::SetNode (Ptr<Node> node)
   m_node = node;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 增加对m_udpSocketList的处理
- */
 int
 QuicL4Protocol::UdpBind (Ptr<QuicSocketBase> socket)
 {
@@ -204,9 +191,6 @@ QuicL4Protocol::UdpBind (Ptr<QuicSocketBase> socket)
           Ptr<Socket> udpSocket = CreateUdpSocket ();
           res = udpSocket->Bind ();
           item->m_budpSocket = udpSocket;
-          // Add by ywj, zhiy zeng
-          item->m_udpSocketList.insert(item->m_udpSocketList.end(),udpSocket);
-          // std::cout<<"<<><><><><><><1.UdpBind(sock): add a udpsocket, now size is: "<<item->m_udpSocketList.size()<<std::endl;
           break;
         }
     }
@@ -236,15 +220,11 @@ QuicL4Protocol::UdpBind6 (Ptr<QuicSocketBase> socket)
   return res;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改实现方式
- */
 int
 QuicL4Protocol::UdpBind (const Address &address, Ptr<QuicSocketBase> socket)
 {
   NS_LOG_FUNCTION (this << address << socket);
-// std::cout<<"++++++++++++++QuicL4Protocol::UdpBind(addr)"<<std::endl;
+
   int res = -1;
   if (InetSocketAddress::IsMatchingType (address))
     {
@@ -252,16 +232,11 @@ QuicL4Protocol::UdpBind (const Address &address, Ptr<QuicSocketBase> socket)
       for (it = m_quicUdpBindingList.begin (); it != m_quicUdpBindingList.end (); ++it)
         {
           Ptr<QuicUdpBinding> item = *it;
-          // Modify by ywj, zhiy zeng
-          if ((item->m_quicSocket == socket and item->m_udpSocketList.size() == 0) || item->m_quicSocket->m_subSocket)
+          if (item->m_quicSocket == socket and  item->m_budpSocket == nullptr)
             {
-              // std::cout<<"debug point 2"<<std::endl;
               Ptr<Socket> udpSocket = CreateUdpSocket ();
               res = udpSocket->Bind (address);
               item->m_budpSocket = udpSocket;
-              // Modify by ywj, zhiy zeng
-              item->m_udpSocketList.insert(item->m_udpSocketList.end(),udpSocket);
-              // std::cout<<"<<><><><><><><2.udpbind(addr,sock):"<<InetSocketAddress::ConvertFrom (address).GetIpv4 ()<<socket<<" add a udpsocket, now size is: "<<item->m_udpSocketList.size()<<std::endl;
               break;
             }
         }
@@ -288,10 +263,6 @@ QuicL4Protocol::UdpBind (const Address &address, Ptr<QuicSocketBase> socket)
   return -1;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改实现方式
- */
 int
 QuicL4Protocol::UdpConnect (const Address & address, Ptr<QuicSocketBase> socket)
 {
@@ -306,11 +277,7 @@ QuicL4Protocol::UdpConnect (const Address & address, Ptr<QuicSocketBase> socket)
           Ptr<QuicUdpBinding> item = *it;
           if (item->m_quicSocket == socket)
             {
-              // Modify by ywj, zhiy zeng
-              //return item->m_budpSocket->Connect (address);
-              m_authAddresses.push_back (InetSocketAddress::ConvertFrom (address).GetIpv4 ());
-              return item->m_udpSocketList.back()->Connect (address);
-              // std::cout<<"^^^^^^^^^^^^QuicL4Protocol::UdpConnect: m_udpsocketlist.back: "<< (item->m_udpSocketList.back() == 0 ? 0:1)<<std::endl;
+              return item->m_budpSocket->Connect (address);
             }
         }
 
@@ -465,10 +432,6 @@ QuicL4Protocol::GetAuthAddresses () const
   return m_authAddresses;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改实现方式
- */
 void
 QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
 {
@@ -479,17 +442,23 @@ QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
   while ((packet = sock->RecvFrom (from)))
     {
       NS_LOG_INFO ("Receiving packet on UDP socket");
-      //packet->Print (std::clog);
-      // NS_LOG_INFO ("");
 
       QuicHeader header;
       packet->RemoveHeader (header);
-
+      NS_LOG_INFO(" Recv pkt " << header.GetPacketNumber () 
+                <<" pathId: "<<header.GetPathId());
       //  std::cout<<this<< " Recv pkt " << header.GetPacketNumber () 
-      //           <<"pathId: "<<header.GetPathId()
+      //           <<" pathId: "<<header.GetPathId()
       //           << " recv seq " << header.GetSeq () 
       //           << " data size " << packet->GetSize () 
       //           <<"\n";
+
+      // if (IsServer()){
+      //   std::cout<<"recv\t"
+      //           << (int)header.GetPathId() <<"\t"
+      //           << header.GetPacketNumber () <<"\t"
+      //           << Simulator::Now().GetSeconds()<< std::endl;
+      // }
 
       uint64_t connectionId;
       if (header.HasConnectionId ())
@@ -543,10 +512,8 @@ QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
         {
           NS_LOG_LOGIC (this << " Cloning listening socket " << m_quicUdpBindingList.front ()->m_quicSocket);
           socket = CloneSocket (m_quicUdpBindingList.front ()->m_quicSocket);
-// std::cout<<"--*-*-*-fowardup(): socket->SetConnectionId 1"<<std::endl;
           socket->SetConnectionId (connectionId);
           socket->Connect (from);
-// std::cout<<"--*-*-*-fowardup(): socket->SetupCallback 1"<<std::endl;
           socket->SetupCallback ();
 
         }
@@ -561,13 +528,6 @@ QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
           NS_LOG_LOGIC ("CONNECTION AUTHENTICATED - Client authenticated Server " << InetSocketAddress::ConvertFrom (from).GetIpv4 () << " port " <<
                         InetSocketAddress::ConvertFrom (from).GetPort () << "");
           m_authAddresses.push_back (InetSocketAddress::ConvertFrom (from).GetIpv4 ()); //add to the list of authenticated sockets
-        }
-      else if (header.IsAnnounce () and m_isServer and socket != nullptr) //for multipath
-        {
-          // ywj: if server receives announce from client, do nothing other than creating a new subflow.
-          m_authAddresses.push_back (InetSocketAddress::ConvertFrom (from).GetIpv4 ());
-        
-          socket->LookUpByAddr (from);     
         }
       else if (header.IsORTT () and m_isServer)
         {
@@ -590,7 +550,6 @@ QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
           socket = CloneSocket (m_quicUdpBindingList.front ()->m_quicSocket);
           socket->SetConnectionId (connectionId);
           socket->Connect (from);
-// std::cout<<"--*-*-*-fowardup(): socket->SetupCallback 2"<<std::endl;
           socket->SetupCallback ();
 
         }
@@ -623,35 +582,29 @@ QuicL4Protocol::ForwardUp (Ptr<Socket> sock)
     }
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改实现方式
- */
 void
 QuicL4Protocol::SetRecvCallback (Callback<void, Ptr<Packet>, const QuicHeader&,  Address& > handler, Ptr<Socket> sock)
 {
+
   NS_LOG_FUNCTION (this);
+
   m_socketHandlers.insert ( std::pair< Ptr<Socket>, Callback<void, Ptr<Packet>, const QuicHeader&, Address& > > (sock,handler));
   QuicUdpBindingList::iterator it;
   for (it = m_quicUdpBindingList.begin (); it != m_quicUdpBindingList.end (); ++it)
     {
       Ptr<QuicUdpBinding> item = *it;
-      // Modify by ywj, zhiy zeng
-      if (item->m_quicSocket == sock && item->m_udpSocketList.back() != 0)
-        { 
-          item->m_udpSocketList.back()->SetRecvCallback (MakeCallback (&QuicL4Protocol::ForwardUp, this));
-          // std::cout<<"^^^^^^^^^^^^QuicL4Protocol::SetRecvCallback: m_udpsocketlist[ "<< item->m_udpSocketList.size()-1<<" ]"<<std::endl;
+      if (item->m_quicSocket == sock && item->m_budpSocket != 0)
+        {
+          item->m_budpSocket->SetRecvCallback (MakeCallback (&QuicL4Protocol::ForwardUp, this));
           break;
         }
       else if (item->m_quicSocket == sock && item->m_budpSocket6 != 0)
         {
-// std::cout<<"********QuicL4Protocol::SetRecvCallback: 2----"<<std::endl;
           item->m_budpSocket6->SetRecvCallback (MakeCallback (&QuicL4Protocol::ForwardUp, this));
           break;
         }
       else if (item->m_quicSocket == sock)
         {
-// std::cout<<"********QuicL4Protocol::SetRecvCallback: The UDP socket for this QuicUdpBinding item is not set"<<std::endl;
           NS_FATAL_ERROR ("The UDP socket for this QuicUdpBinding item is not set");
         }
     }
@@ -695,10 +648,6 @@ QuicL4Protocol::DoDispose (void)
   IpL4Protocol::DoDispose ();
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 删除对m_pathId的处理
- */
 Ptr<QuicSocketBase>
 QuicL4Protocol::CloneSocket (Ptr<QuicSocketBase> oldsock)
 {
@@ -709,6 +658,7 @@ QuicL4Protocol::CloneSocket (Ptr<QuicSocketBase> oldsock)
   udpBinding->m_budpSocket = nullptr;
   udpBinding->m_budpSocket6 = nullptr;
   udpBinding->m_quicSocket = newsock;
+  udpBinding->m_pathId = 0;
   m_quicUdpBindingList.insert (m_quicUdpBindingList.end (), udpBinding);
 
   return newsock;
@@ -722,10 +672,6 @@ QuicL4Protocol::CreateSocket ()
   return CreateSocket (m_congestionTypeId);
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 删除对m_pathId的处理
- */
 Ptr<Socket>
 QuicL4Protocol::CreateSocket (TypeId congestionTypeId)
 {
@@ -773,6 +719,7 @@ QuicL4Protocol::CreateSocket (TypeId congestionTypeId)
   udpBinding->m_budpSocket = nullptr;
   udpBinding->m_budpSocket6 = nullptr;
   udpBinding->m_quicSocket = socket;
+  udpBinding->m_pathId = 0;
   m_quicUdpBindingList.insert (m_quicUdpBindingList.end (), udpBinding);
 
   return socket;
@@ -838,31 +785,30 @@ QuicL4Protocol::Receive (Ptr<Packet> packet,
                          Ipv6Header const &incomingIpHeader,
                          Ptr<Ipv6Interface> interface)
 {
-  NS_LOG_FUNCTION (this << packet << incomingIpHeader.GetSourceAddress () <<
-                   incomingIpHeader.GetDestinationAddress ());
+  NS_LOG_FUNCTION (this << packet << incomingIpHeader.GetSource () <<
+                   incomingIpHeader.GetDestination ());
   NS_FATAL_ERROR ("This call should not be used: QUIC packets need to go through a UDP socket");
   return IpL4Protocol::RX_OK;
 }
 
-/**
- * zhiy zeng: Modify by ywj
- * 修改实现方式
- */
 void
 QuicL4Protocol::SendPacket (Ptr<QuicSocketBase> socket, Ptr<Packet> pkt, const QuicHeader &outgoing) const
 {
   NS_LOG_FUNCTION (this << socket);
-  uint16_t pathId = outgoing.GetPathId (); 
-  NS_LOG_LOGIC (this
-                << " sending seq " << outgoing.GetPacketNumber ()
+  uint8_t pathId = outgoing.GetPathId (); 
+  NS_LOG_LOGIC (this << "sendpacket with"
                 << " path Id: "<< pathId
+                << " sending pkt #" << outgoing.GetPacketNumber ()
                 << " data size " << pkt->GetSize ());
 
-  std::cout<<Simulator::Now().GetSeconds()
-                <<" QuicL4Protocol::SendPacket "
-                << " sending seq " << outgoing.GetPacketNumber ()
-                << " path Id: "<< pathId
-                << " data size " << pkt->GetSize ()<<std::endl;
+  //log for experiment
+  // if (!IsServer()){
+  //   std::cout<<"send\t"
+  //            << (int)pathId <<"\t"
+  //            << outgoing.GetPacketNumber () <<"\t"
+  //            << Simulator::Now().GetSeconds()<< std::endl;
+  // }
+
   
   NS_LOG_INFO ("Sending Packet Through UDP Socket");
 
@@ -872,31 +818,14 @@ QuicL4Protocol::SendPacket (Ptr<QuicSocketBase> socket, Ptr<Packet> pkt, const Q
   Ptr<Packet> packetSent = Create<Packet> ();
   packetSent->AddHeader (outgoing);
   packetSent->AddAtEnd (pkt);
-  // NS_LOG_INFO ("" );
-  //packetSent->Print (std::clog);
-  // NS_LOG_INFO ("");
-      
-  // std::cout<<this<< " sending pkt " << outgoing.GetPacketNumber () 
-  //               <<"pathId: "<<pathId
-  //               << " sending seq " << outgoing.GetSeq () 
-  //               << " data size " << pkt->GetSize () 
-  //               <<"\n";
 
-  // std::cout<<"^^^^------^^^^^^QuicL4Protocol::SendPacket: pathId: "<<pathId<<std::endl;
   QuicUdpBindingList::const_iterator it;
   for (it = m_quicUdpBindingList.begin (); it != m_quicUdpBindingList.end (); ++it)
     {
       Ptr<QuicUdpBinding> item = *it;
-      if (item->m_quicSocket == socket)
+      if (item->m_quicSocket == socket && item->m_pathId == pathId)
         {
-          // std::cout<<"----==------ QuicL4Protocol::SendPacket: m_udpSocketList. size: "<<item->m_udpSocketList.size()<<std::endl;
-          if (m_isServer && item->m_udpSocketList.size() == 3){
-            UdpSend (item->m_udpSocketList[pathId+1], packetSent, 0);
-          } else {
-            UdpSend (item->m_udpSocketList[pathId], packetSent, 0);
-          }
-          
-
+          UdpSend (item->m_budpSocket, packetSent, 0);
           break;
         }
     }
@@ -1066,6 +995,66 @@ bool
 QuicL4Protocol::Is0RTTHandshakeAllowed () const
 {
   return m_0RTTHandshakeStart;
+}
+
+//For multipath implementation
+
+int
+QuicL4Protocol::AddPath(uint8_t pathId, Ptr<QuicSocketBase> socket, Address localAddress, Address peerAddress)
+{
+  NS_LOG_FUNCTION (this);
+  int res = -1;
+  if (InetSocketAddress::IsMatchingType (localAddress))
+    {
+      Ptr<QuicUdpBinding> udpBinding = CreateObject<QuicUdpBinding> ();
+      Ptr<Socket> udpSocket = CreateUdpSocket ();
+      res = udpSocket->Bind (localAddress);
+      udpSocket->Connect(peerAddress);
+      udpSocket->SetRecvCallback (MakeCallback (&QuicL4Protocol::ForwardUp, this));
+      udpBinding->m_budpSocket = udpSocket;
+      udpBinding->m_budpSocket6 = nullptr;
+      udpBinding->m_quicSocket = socket;
+      udpBinding->m_pathId = pathId;
+      m_quicUdpBindingList.insert(m_quicUdpBindingList.end (),udpBinding);
+      return res;
+    }
+  else if (Inet6SocketAddress::IsMatchingType (localAddress))
+    {
+      Ptr<QuicUdpBinding> udpBinding = CreateObject<QuicUdpBinding> ();
+      Ptr<Socket> udpSocket = CreateUdpSocket ();
+      res = udpSocket->Bind (localAddress);
+      udpSocket->Connect(peerAddress);
+      udpSocket->SetRecvCallback (MakeCallback (&QuicL4Protocol::ForwardUp, this));
+      udpBinding->m_budpSocket = nullptr;
+      udpBinding->m_budpSocket6 = udpSocket;
+      udpBinding->m_quicSocket = socket;
+      udpBinding->m_pathId = pathId;
+      m_quicUdpBindingList.insert(m_quicUdpBindingList.end (),udpBinding);
+      return res;
+    }
+  return -1;
+}
+
+void
+QuicL4Protocol::Allow0RTTHandshake (bool allow0RTT)
+{
+  m_0RTTHandshakeStart = allow0RTT;
+}
+
+int
+QuicL4Protocol::ReDoUdpConnect(uint8_t pathId, Address peerAddress)
+{
+  QuicUdpBindingList::iterator it;
+  Ptr<QuicSocketBase> socket;
+  for (it = m_quicUdpBindingList.begin (); it != m_quicUdpBindingList.end (); ++it)
+    {
+      Ptr<QuicUdpBinding> item = *it;
+      if (item->m_pathId == pathId)
+        {
+          return item->m_budpSocket->Connect(peerAddress);
+        }
+    }
+    return -1;
 }
 
 } // namespace ns3
